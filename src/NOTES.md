@@ -1,110 +1,106 @@
 # Anotações — shorterlink
 
-## HTTP / Express
+## API atual
 
-- **Uma resposta por request** — não usar `res.send` e `res.redirect` juntos; o primeiro “ganha”, o segundo dá `ERR_HTTP_HEADERS_SENT`.
-- **`res.redirect(url)`** — status 302; navegador segue para a URL longa.
-- **`express.json()`** — antes das rotas; sem isso `req.body` fica `undefined` no POST.
-- Status no projeto: **400** (dados inválidos), **404** (código não existe), **201** (link criado).
+| Método | Rota | Body | Resposta |
+|--------|------|------|----------|
+| GET | `/` | — | JSON array de links |
+| POST | `/links` | `{ "code", "url" }` | 201 / 400 / 409 |
+| DELETE | `/links/:code` | — | 200 / 404 |
+| GET | `/:code` | — | 302 redirect / 404 |
 
-## Objeto em memória (antes do banco)
+Redirect público: `http://localhost:4000/<code>`
 
-```ts
-const links: Record<string, string> = {
-  google: "https://www.google.com",
-};
-```
+---
 
-- `Record<string, string>` = chave string → valor string.
-- Lookup: `links[code]` → redirect ou 404.
-
-## POST + curl (CMD)
+## curl (CMD)
 
 ```cmd
-curl -X POST http://localhost:4000/qualquercoisa -H "Content-Type: application/json" -d "{\"code\":\"gh\",\"url\":\"https://github.com\"}"
+curl http://localhost:4000/
+
+curl -X POST http://localhost:4000/links -H "Content-Type: application/json" -d "{\"code\":\"gh\",\"url\":\"https://github.com\"}"
+
+curl -w "\nHTTP %{http_code}\n" -X POST http://localhost:4000/links -H "Content-Type: application/json" -d "{\"code\":\"gh\",\"url\":\"https://github.com\"}"
+
+curl -X DELETE http://localhost:4000/links/gh
 ```
 
-- Path do curl = path do `app.post(...)` (ex.: `POST /:code` → URL com um segmento, não `/links` se a rota for outra).
-- `\"` = escape de aspas do JSON dentro das aspas do CMD.
+- **`-X`** = método HTTP (POST, DELETE)
+- **`-w "%{http_code}"`** = mostra status (409, 201, etc.)
+- **`\"`** = escape de aspas do JSON no CMD
+- No **PowerShell**, usar **`curl.exe`** (não o alias `Invoke-WebRequest`)
 
-## dotenv
+---
 
-- `import "dotenv/config"` no topo do `server.ts`.
-- Ler variáveis com **`process.env.PORT`** — não existe `dotenv.PORT`.
-- `PORT` = porta do Express; `DB_PORT` = porta do MySQL (3306).
-- `process.env` sempre **string** → `Number(process.env.DB_PORT)` para números.
+## HTTP — status usados
 
-## Dev workflow
+| Código | Quando |
+|--------|--------|
+| 200 | DELETE ok |
+| 201 | Link criado |
+| 302 | Redirect (`res.redirect`) |
+| 400 | Falta code/url ou params inválidos |
+| 404 | Link não existe |
+| 409 | Código duplicado no POST |
+| 500 | Erro de banco (`try/catch`) |
 
-```json
-"dev": "concurrently \"npm run watch\" \"nodemon dist/server.js\""
+---
+
+## Express
+
+- **`express.json()`** antes das rotas
+- **`res.json(data)`** — JSON com header correto
+- **Uma resposta por request** — não `send` + `redirect` juntos
+- Rotas **fixas antes** de `GET /:code`
+
+---
+
+## dotenv / env
+
+```ts
+import "dotenv/config";
 ```
 
-- Salvar `.ts` → recompila → nodemon reinicia.
+- `PORT` → Express
+- `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` → adapter
+- `process.env` = string → `Number()` para portas
 
-## tsconfig
-
-- `"include": ["src/**/*.ts"]` — não compilar `prisma.config.ts` na raiz (erro TS6059 com `rootDir: ./src`).
+---
 
 ## Prisma 7 + MySQL
 
-### Comandos
-
-| Comando | O que faz |
-|---------|-----------|
-| `npx prisma migrate dev --name init` | Lê schema → cria migration → aplica no MySQL → gera client |
-| `npx prisma generate` | Só regenera o client |
-
-### Import do client
-
-```ts
-import { PrismaClient } from "./generated/prisma/client.js";
-```
-
-Não usar `@prisma/client` quando o schema tem `output = "../src/generated/prisma"`.
-
-### Adapter (obrigatório no Prisma 7)
-
 ```ts
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
+import { PrismaClient } from "./generated/prisma/client.js";
 
-const adapter = new PrismaMariaDb({
-  host: "localhost",
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER ?? "root",
-  password: process.env.DB_PASSWORD ?? "",
-  database: process.env.DB_NAME ?? "shorterlink",
-});
-
+const adapter = new PrismaMariaDb({ host, port: Number(...), user, password, database });
 const prisma = new PrismaClient({ adapter });
 ```
 
-### Queries usadas
-
 ```ts
-// Criar
+await prisma.link.findMany();
+await prisma.link.findUnique({ where: { code } });
 await prisma.link.create({ data: { code, url } });
-
-// Buscar por código (@unique)
-const link = await prisma.link.findUnique({ where: { code } });
-if (link) res.redirect(link.url);
+await prisma.link.delete({ where: { code } });
 ```
 
-- Handlers com banco: **`async`** + **`await`**.
-- Model `Link` no schema → `prisma.link` no código (minúsculo).
+- Handlers: **`async`** + **`await`**
+- **`typeof code !== "string"`** antes de queries com `req.params`
 
-### Tipagem Express 5 + Prisma
+---
 
-`req.params.code` pode ser `string | string[] | undefined` → antes do `findUnique`:
+## Comandos úteis
 
-```ts
-if (typeof code !== "string") {
-  res.status(404).send("Link not found");
-  return;
-}
+```cmd
+npm run dev
+npx prisma studio
+npx prisma migrate dev --name <nome>
 ```
 
-## Pendências no código
+---
 
-- Remover `const links` e checar duplicado no banco (ou tratar erro **P2002**).
-- `app.listen(Number(process.env.PORT) || 3000)` como fallback.
+## Pendências (fase 2)
+
+- Validar formato da URL no POST
+- `201` com `res.json({ code, url })`
+- `.env.example` no repo

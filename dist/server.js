@@ -11,41 +11,75 @@ const adapter = new PrismaMariaDb({
 });
 const prisma = new PrismaClient({ adapter });
 const app = express();
-const links = {
-    "google": "https://www.google.com",
-};
+const PORT = process.env.PORT || 3000;
 app.use(express.json());
-app.get("/", (req, res) => {
-    res.send("Hello World");
-});
-app.get("/:code", (req, res) => {
-    const { code } = req.params;
-    const url = links[code];
-    if (url) {
-        res.redirect(url);
-        return;
+app.get("/", async (req, res) => {
+    try {
+        const list = await prisma.link.findMany();
+        res.json(list);
     }
-    else {
-        res.status(404).send("Link not found");
-        return;
+    catch (error) {
+        res.status(500).send("Database error");
+        console.error(error);
     }
 });
-app.post("/:code", async (req, res) => {
+app.post("/links", async (req, res) => {
     const { code, url } = req.body;
     if (!code || !url) {
-        res.status(400).send("Code and url are required");
+        res.status(400).send("Both Code and url are required");
         return;
     }
-    else if (links[code]) {
-        res.status(400).send("Code already exists");
-        return;
-    }
-    else {
+    try {
+        const existing = await prisma.link.findUnique({ where: { code } });
+        if (existing) {
+            res.status(409).send("Code already exists");
+            return;
+        }
         await prisma.link.create({ data: { code, url } });
         res.status(201).send("Link created");
     }
+    catch (error) {
+        res.status(500).send("Database error");
+    }
 });
-app.listen(process.env.PORT, () => {
-    console.log(`Server is running on port ${process.env.PORT}`);
+app.delete("/links/:code", async (req, res) => {
+    const { code } = req.params;
+    if (typeof code !== "string") {
+        res.status(400).send("Code is not a string");
+        return;
+    }
+    try {
+        const link = await prisma.link.findUnique({ where: { code } });
+        if (!link) {
+            res.status(404).send("Link not found");
+            return;
+        }
+        await prisma.link.delete({ where: { code } });
+        res.status(200).send("Link deleted");
+    }
+    catch (error) {
+        res.status(500).send("Database error");
+    }
+});
+app.get("/:code", async (req, res) => {
+    const { code } = req.params;
+    if (typeof code !== "string") {
+        res.status(400).send("Code is not a string");
+        return;
+    }
+    try {
+        const link = await prisma.link.findUnique({ where: { code } });
+        if (link) {
+            res.redirect(link.url);
+            return;
+        }
+        res.status(404).send("Link not found");
+    }
+    catch (error) {
+        res.status(500).send("Database error");
+    }
+});
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
 });
 //# sourceMappingURL=server.js.map
