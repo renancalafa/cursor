@@ -2,6 +2,7 @@ import express, { type Request, type Response } from "express";
 import "dotenv/config";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { PrismaClient } from "./generated/prisma/client.js";
+import { randomBytes } from "node:crypto";
 
 const adapter = new PrismaMariaDb({
     host: "localhost",
@@ -17,6 +18,17 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 
+const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+const generateCode = (): string => {
+    const bytes = randomBytes(5);
+    let code = "";
+    for (let i = 0; i < 5; i++) {
+        code += CODE_CHARS[bytes[i]! % CODE_CHARS.length];
+    }
+    return code as string;
+};
+
 app.use(express.json());
 
 app.get("/", async (req: Request, res: Response) => {
@@ -31,17 +43,18 @@ app.get("/", async (req: Request, res: Response) => {
 
 
 app.post("/links", async (req: Request, res: Response) => {
-    const { code, url } = req.body;
-    if (!code || !url) {
-        res.status(400).send("Both Code and url are required");
+    const { url } = req.body;
+    if (!url) {
+        res.status(400).send("Url are required");
         return;
     }
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        res.status(400).send("URL must start with http://");
+        return;
+    }
+
     try {
-        const existing = await prisma.link.findUnique({ where: { code } });
-        if (existing) {
-            res.status(409).send("Code already exists");
-            return;
-        }
+        const code = generateCode();
         await prisma.link.create({ data: { code, url } });
         res.status(201).send("Link created");
     } catch (error) {

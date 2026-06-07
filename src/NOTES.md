@@ -1,15 +1,17 @@
 # Anotações — shorterlink
 
-## API atual
+## API atual (fase 3)
 
 | Método | Rota | Body | Resposta |
 |--------|------|------|----------|
 | GET | `/` | — | JSON array de links |
-| POST | `/links` | `{ "code", "url" }` | 201 / 400 / 409 |
+| POST | `/links` | `{ "url" }` | 201 / 400 / 500 |
 | DELETE | `/links/:code` | — | 200 / 404 |
 | GET | `/:code` | — | 302 redirect / 404 |
 
-Redirect público: `http://localhost:4000/<code>`
+O **código curto é gerado pela API** — o cliente não envia `code`.
+
+Redirect: `http://localhost:4000/<code>`
 
 ---
 
@@ -18,89 +20,61 @@ Redirect público: `http://localhost:4000/<code>`
 ```cmd
 curl http://localhost:4000/
 
-curl -X POST http://localhost:4000/links -H "Content-Type: application/json" -d "{\"code\":\"gh\",\"url\":\"https://github.com\"}"
+curl -X POST http://localhost:4000/links -H "Content-Type: application/json" -d "{\"url\":\"https://github.com\"}"
 
-curl -w "\nHTTP %{http_code}\n" -X POST http://localhost:4000/links -H "Content-Type: application/json" -d "{\"code\":\"gh\",\"url\":\"https://github.com\"}"
+curl -w "\nHTTP %{http_code}\n" -X POST http://localhost:4000/links -H "Content-Type: application/json" -d "{\"url\":\"google.com\"}"
 
-curl -X DELETE http://localhost:4000/links/gh
+curl -X DELETE http://localhost:4000/links/abc12
 ```
 
-- **`-X`** = método HTTP (POST, DELETE)
-- **`-w "%{http_code}"`** = mostra status (409, 201, etc.)
-- **`\"`** = escape de aspas do JSON no CMD
-- No **PowerShell**, usar **`curl.exe`** (não o alias `Invoke-WebRequest`)
+- POST inválido (sem http): **400**
+- **`-w "%{http_code}"`** mostra o status HTTP
 
 ---
 
-## HTTP — status usados
+## generateCode (crypto)
+
+```ts
+import { randomBytes } from "node:crypto";
+
+const CODE_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+const generateCode = (): string => {
+    const bytes = randomBytes(5);
+    let code = "";
+    for (let i = 0; i < 5; i++) {
+        code += CODE_CHARS[bytes[i]! % CODE_CHARS.length];
+    }
+    return code;
+};
+```
+
+### generateUniqueCode (a implementar)
+
+```ts
+for (let attempt = 0; attempt < 10; attempt++) {
+    const code = generateCode();
+    const existing = await prisma.link.findUnique({ where: { code } });
+    if (!existing) return code;
+}
+return null;
+```
+
+---
+
+## HTTP — status
 
 | Código | Quando |
 |--------|--------|
-| 200 | DELETE ok |
 | 201 | Link criado |
-| 302 | Redirect (`res.redirect`) |
-| 400 | Falta code/url ou params inválidos |
-| 404 | Link não existe |
-| 409 | Código duplicado no POST |
-| 500 | Erro de banco (`try/catch`) |
+| 400 | URL faltando ou inválida |
+| 404 | Código não existe |
+| 500 | Banco / não gerou código único |
 
 ---
 
-## Express
+## Pendências
 
-- **`express.json()`** antes das rotas
-- **`res.json(data)`** — JSON com header correto
-- **Uma resposta por request** — não `send` + `redirect` juntos
-- Rotas **fixas antes** de `GET /:code`
-
----
-
-## dotenv / env
-
-```ts
-import "dotenv/config";
-```
-
-- `PORT` → Express
-- `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` → adapter
-- `process.env` = string → `Number()` para portas
-
----
-
-## Prisma 7 + MySQL
-
-```ts
-import { PrismaMariaDb } from "@prisma/adapter-mariadb";
-import { PrismaClient } from "./generated/prisma/client.js";
-
-const adapter = new PrismaMariaDb({ host, port: Number(...), user, password, database });
-const prisma = new PrismaClient({ adapter });
-```
-
-```ts
-await prisma.link.findMany();
-await prisma.link.findUnique({ where: { code } });
-await prisma.link.create({ data: { code, url } });
-await prisma.link.delete({ where: { code } });
-```
-
-- Handlers: **`async`** + **`await`**
-- **`typeof code !== "string"`** antes de queries com `req.params`
-
----
-
-## Comandos úteis
-
-```cmd
-npm run dev
-npx prisma studio
-npx prisma migrate dev --name <nome>
-```
-
----
-
-## Pendências (fase 2)
-
-- Validar formato da URL no POST
-- `201` com `res.json({ code, url })`
-- `.env.example` no repo
+- [ ] `generateUniqueCode` no POST
+- [ ] `201` com `res.json({ code, url })`
+- [ ] `.env.example`
